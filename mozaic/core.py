@@ -6,6 +6,7 @@ from typing import Any, List
 from scipy.optimize import minimize_scalar
 
 from mozaic import Tile
+from .tile import sum_tile_dfs
 
 
 @dataclass
@@ -294,6 +295,7 @@ class Mozaic:
         self.forecasted_holiday_impacts = impact_series
 
     def to_df(self, quantile=0.5):
+        """Returns a comprehensive dataframe with granular actual and forecast data"""
         actuals_df = pd.DataFrame(
             {
                 "submission_date": self.historical_dates.values,
@@ -338,3 +340,93 @@ class Mozaic:
                 df[f"{i}_28ma"] = df[i].rolling(28).mean()
 
         return df
+
+    def get_countries(self) -> set[str]:
+        return set([tile.country for tile in tiles])
+        
+    def get_populations(self) -> set[str]:
+        return set([tile.population for tile in tiles])
+
+    @static
+    def _standard_df_to_forecast_df(df: pd.DataFrame, ma: bool = False) -> DataFrame:
+        if ma:
+            forcast_col = 'forecast_28ma'
+            actual_col = 'actuals_28ma'
+        else:
+            forecast_col = 'forecast'
+            actual_col = 'actuals'
+
+        df = df.copy()
+        df['has_forecast'] = ~df['forecast'].isna()
+        df['value'] = df[forecast_col] if df['has_forecast'] else df[actual_col]
+        df['source'] = 'forecast' if df['has_forecast'] else 'actual'
+
+        df.rename(cols = {'submission_date': 'target_date'})
+
+        df = df[['target_date', 'source', 'value']]
+        df = df[~df['value'].isna()]
+
+        return df
+
+    def to_forecast_df(self, country: str = None, population: str = None, 
+            ma: bool = False, quantile: float = 0.5):
+        """Returns a focused dataframe with target_date, "actual" or "forecast", and value 
+            columns. If either country, population, or both are None, then the dataframe 
+            values are aggregated over all values of that parameter(s).
+        """
+        if not (country or population):
+            df = self.to_df(quantile)
+
+        else:
+            relevant_tiles = []
+            for tile in self.tiles:
+                if country is None or tile.country == country:
+                    if population is None or tile.population == population:
+                        relelvant_tiles.append(tile)
+
+            df = sum_tile_dfs([tile.to_df(quantile) for tile in relevant_tiles])
+
+        return Mozaic._standard_df_to_forecast_df(df, ma) 
+
+    @static
+    def _add_indicator_columns(df: pd.DataFrame, country: str, poulation: str) -> pd.DataFrame:
+        df['country'] = country
+        df['population'] = population
+        return df[['target_date', 'country', 'population', 'source', 'value']]
+
+
+    def to_granular_forecast_df(self, ma: bool = False, quantile: float = 0.5):
+        """Returns a dataframe with columns: country, population, target_date, source, and value. 
+            There is one row per date pair for each combination of country and population, including 
+            aggregates over all of them, giving (n_countries+1)*(n_populations+1) rows per date."""
+        tile_sets = {}
+        for country in self.get_countries():
+            tile_sets[(country, 'None')] = list()
+            for population in self.get_populations():
+                tile_sets[(country, population)] = list()
+        for population in self.get_populations():
+            tile_sets[('None', population)] = list()
+
+        for tile in self.tiles:
+            cur_country = tile.country
+            cur_population = tile.population
+            tile_sets[('None', cur_population)].append(tile)
+            tile_sets[(cur_country, 'None')].append(tile)
+            tile_sets[(cur_country, cur_population)].append(tile)
+
+        all_dfs = list()
+        for key, relevant_tiles in tile_sets.items():
+            cur_df = sum_tile_dfs([tile.to_df(quantile) for tile in relevant_tiles])
+            all_dfs.append(Mozaic._add_indicator_columns(
+                key[0], key[1], Mozaic._standard_df_to_forecast_df(cur_df)
+            ))
+        all_dfs.append(Mozaic._add_indicator_columns(
+            'None', 'None', self.to_df(quantile)
+        ))
+
+        return (
+            pd.concat(all_dfs, ignore_index=True)
+            .sort_values(['target_date', 'country', 'population'])
+        )
+
+
