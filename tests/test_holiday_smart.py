@@ -85,7 +85,7 @@ def test_A1_full_parity_with_holidays(country, years):
     # Build expected baseline from external lib with the same text transforms.
     baseline = _transform_baseline_to_match_impl(country, years)
     # Call our function
-    df = get_calendar(country=country, holiday_years=years, include_paschal_cycle=False, split_concurrent_holidays=False)
+    df = get_calendar(country=country, holiday_years=years, exclude_paschal_cycle=['US', 'FR'], split_concurrent_holidays=False)
     # Basic schema checks
     assert list(df.columns) == ["submission_date", "holiday", "country"]
     assert (df["country"] == country).all()
@@ -117,7 +117,6 @@ def test_A3_synthetic_substitution_normalization():
     df = get_calendar(
         country="US",
         holiday_years=[2024],
-        include_paschal_cycle=False,
         split_concurrent_holidays=False,
         additional_holidays=[SyntheticSubCalendar],
     )
@@ -132,7 +131,6 @@ def test_A4_split_concurrent_holidays_false():
     df = get_calendar(
         country="IR",
         holiday_years=[2025],
-        include_paschal_cycle=False,
         split_concurrent_holidays=False,
         additional_holidays=[IranInternetBlackout],  # although module already adds for IR, keep explicit to test merge idempotence
     )
@@ -146,7 +144,6 @@ def test_A5_split_concurrent_holidays_true():
     df = get_calendar(
         country="IR",
         holiday_years=[2025],
-        include_paschal_cycle=False,
         split_concurrent_holidays=True,
         additional_holidays=[IranInternetBlackout],
     )
@@ -161,19 +158,19 @@ def test_A5_split_concurrent_holidays_true():
 
 def test_A6_paschal_cycle():
     # Include for FR 2024
-    df_fr = get_calendar(country="FR", holiday_years=[2024], include_paschal_cycle=True)
+    df_fr = get_calendar(country="FR", holiday_years=[2024])
     easter_2024 = pd.Timestamp(holiday_smart.easter(2024))
     assert (df_fr["submission_date"] == easter_2024).any(), "Expected Easter Sunday in FR 2024 with paschal cycle"
     assert df_fr["holiday"].str.contains("FR Easter", regex=False).any()
 
     # Exclude for JP 2024 (JP is in NO_PASCHAL_CYCLE)
     assert "JP" in NO_PASCHAL_CYCLE
-    df_jp = get_calendar(country="JP", holiday_years=[2024], include_paschal_cycle=False)
+    df_jp = get_calendar(country="JP", holiday_years=[2024])
     assert not df_jp["holiday"].str.contains("Easter", case=False, regex=True).any()
 
 
 def test_A7_sorting_and_uniqueness():
-    df = get_calendar(country="US", holiday_years=[2023, 2024, 2025], include_paschal_cycle=False, split_concurrent_holidays=True)
+    df = get_calendar(country="US", holiday_years=[2023, 2024, 2025], split_concurrent_holidays=True)
     # Non-decreasing dates
     assert (df["submission_date"].sort_values().reset_index(drop=True) == df["submission_date"].reset_index(drop=True)).all()
     # Uniqueness of (date, holiday) when split=True
