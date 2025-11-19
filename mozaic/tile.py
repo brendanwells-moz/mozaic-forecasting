@@ -5,7 +5,7 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Any, List, Type
 
-from mozaic.holidays import get_calendar, detrend
+from mozaic.holiday_smart import get_calendar, detrend
 
 
 @dataclass
@@ -116,8 +116,8 @@ class Tile:
 
 
 def sum_tile_dfs(dfs: list[pd.DataFrame]) -> pd.DataFrame:
-    return [
+    return (
         pd.concat(dfs, ignore_index=True)
-        .groupby('sumission_date', as_index=False)
-        .sum(numeric_only=True)
-    ]
+        .groupby('submission_date', as_index=False)
+        .sum(numeric_only=True, min_count=1)
+    )

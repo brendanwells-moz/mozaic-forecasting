@@ -85,6 +85,9 @@ class Mozaic:
         for i in self.tiles[1:]:
             i.mozaic = self
 
+    def __repr__(self):
+        return f"Mozaic(id={hex(id(self))}, tiles={len(self.tiles)})"
+
     def reset_reconciliation(self):
         self.forecast_reconciled = self.forecast.copy(deep=True)
         for tile in self.tiles:
@@ -257,6 +260,8 @@ class Mozaic:
         if self.is_country_level:
             self._fit_holiday_effects()
             unmatched = self._predict_holiday_effects()
+        else:
+            unmatched = None
 
         for tile in self.tiles:
             # If this mozaic has proportional effects, pass them to child tiles
@@ -342,15 +347,15 @@ class Mozaic:
         return df
 
     def get_countries(self) -> set[str]:
-        return set([tile.country for tile in tiles])
+        return set([tile.country for tile in self.tiles])
         
     def get_populations(self) -> set[str]:
-        return set([tile.population for tile in tiles])
+        return set([tile.population for tile in self.tiles])
 
-    @static
-    def _standard_df_to_forecast_df(df: pd.DataFrame, ma: bool = False) -> DataFrame:
+    @staticmethod
+    def _standard_df_to_forecast_df(df: pd.DataFrame, ma: bool = False) -> pd.DataFrame:
         if ma:
-            forcast_col = 'forecast_28ma'
+            forecast_col = 'forecast_28ma'
             actual_col = 'actuals_28ma'
         else:
             forecast_col = 'forecast'
@@ -358,15 +363,15 @@ class Mozaic:
 
         df = df.copy()
         df['has_forecast'] = ~df['forecast'].isna()
-        df['value'] = df[forecast_col] if df['has_forecast'] else df[actual_col]
-        df['source'] = 'forecast' if df['has_forecast'] else 'actual'
+        df['value'] = np.where(df['has_forecast'], df[forecast_col], df[actual_col])
+        df['source'] = np.where(df['has_forecast'], 'forecast', 'actual')
 
-        df.rename(cols = {'submission_date': 'target_date'})
+        df = df.rename(columns = {'submission_date': 'target_date'})
 
         df = df[['target_date', 'source', 'value']]
         df = df[~df['value'].isna()]
 
-        return df
+        return df.reset_index(drop=True)
 
     def to_forecast_df(self, country: str = None, population: str = None, 
             ma: bool = False, quantile: float = 0.5):
@@ -382,51 +387,52 @@ class Mozaic:
             for tile in self.tiles:
                 if country is None or tile.country == country:
                     if population is None or tile.population == population:
-                        relelvant_tiles.append(tile)
+                        relevant_tiles.append(tile)
 
             df = sum_tile_dfs([tile.to_df(quantile) for tile in relevant_tiles])
 
-        return Mozaic._standard_df_to_forecast_df(df, ma) 
+        return Mozaic._standard_df_to_forecast_df(df, ma).reset_index(drop=True)
 
-    @static
-    def _add_indicator_columns(df: pd.DataFrame, country: str, poulation: str) -> pd.DataFrame:
+    @staticmethod
+    def _add_indicator_columns(country: str, population: str, df: pd.DataFrame) -> pd.DataFrame:
         df['country'] = country
         df['population'] = population
         return df[['target_date', 'country', 'population', 'source', 'value']]
 
 
-    def to_granular_forecast_df(self, ma: bool = False, quantile: float = 0.5):
+    def to_granular_forecast_df(self, ma: bool = False, quantile: float = 0.5) -> pd.DataFrame:
         """Returns a dataframe with columns: country, population, target_date, source, and value. 
             There is one row per date pair for each combination of country and population, including 
             aggregates over all of them, giving (n_countries+1)*(n_populations+1) rows per date."""
-        tile_sets = {}
+        tile_dict = {}
         for country in self.get_countries():
-            tile_sets[(country, 'None')] = list()
+            tile_dict[(country, 'None')] = list()
             for population in self.get_populations():
-                tile_sets[(country, population)] = list()
+                tile_dict[(country, population)] = list()
         for population in self.get_populations():
-            tile_sets[('None', population)] = list()
+            tile_dict[('None', population)] = list()
 
         for tile in self.tiles:
             cur_country = tile.country
             cur_population = tile.population
-            tile_sets[('None', cur_population)].append(tile)
-            tile_sets[(cur_country, 'None')].append(tile)
-            tile_sets[(cur_country, cur_population)].append(tile)
+            tile_dict[('None', cur_population)].append(tile)
+            tile_dict[(cur_country, 'None')].append(tile)
+            tile_dict[(cur_country, cur_population)].append(tile)
 
         all_dfs = list()
-        for key, relevant_tiles in tile_sets.items():
+        for key, relevant_tiles in tile_dict.items():
             cur_df = sum_tile_dfs([tile.to_df(quantile) for tile in relevant_tiles])
             all_dfs.append(Mozaic._add_indicator_columns(
                 key[0], key[1], Mozaic._standard_df_to_forecast_df(cur_df)
             ))
         all_dfs.append(Mozaic._add_indicator_columns(
-            'None', 'None', self.to_df(quantile)
+            'None', 'None', Mozaic._standard_df_to_forecast_df(self.to_df(quantile))
         ))
 
         return (
             pd.concat(all_dfs, ignore_index=True)
             .sort_values(['target_date', 'country', 'population'])
+            .reset_index(drop=True)
         )
 
 
