@@ -9,7 +9,7 @@ dependencies = [
     "numpy==2.2.6",
     "pandas==2.3.1",
     "plotly==6.2.0",
-    "prophet==1.1.7",
+    "prophet==1.2.1",
     "python-dateutil==2.9.0.post0",
     "scipy==1.15.3",
     "tzdata==2025.2",
