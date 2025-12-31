@@ -19,7 +19,7 @@ def _print_fit_summary(m):
     print(out)
 
 
-def desktop_forecast_model(historical_data, historical_dates, forecast_dates):
+def desktop_forecast_model(historical_data, historical_dates, forecast_dates, print_summary=False):
     params = {
         "daily_seasonality": False,
         "weekly_seasonality": True,
@@ -93,7 +93,8 @@ def desktop_forecast_model(historical_data, historical_dates, forecast_dates):
     m = prophet.Prophet(**params)
     m.fit(observed)
 
-    _print_fit_summary(m)
+    if print_summary:
+        _print_fit_summary(m)
 
     prophet_forecast = m.predict(future)
     predictive_samples = pd.DataFrame(m.predictive_samples(future)["yhat"])
@@ -105,7 +106,7 @@ def desktop_forecast_model(historical_data, historical_dates, forecast_dates):
     return predictive_samples, m, prophet_forecast
 
 
-def mobile_forecast_model(historical_data, historical_dates, forecast_dates):
+def mobile_forecast_model(historical_data, historical_dates, forecast_dates, print_summary=False):
     params = {
         "daily_seasonality": False,
         "weekly_seasonality": True,
@@ -148,7 +149,8 @@ def mobile_forecast_model(historical_data, historical_dates, forecast_dates):
             future["floor"] = floor
 
     m.fit(observed)
-    _print_fit_summary(m)
+    if print_summary:
+        _print_fit_summary(m)
     prophet_forecast = m.predict(future)
     predictive_samples = pd.DataFrame(m.predictive_samples(future)["yhat"])
     predictive_samples[predictive_samples < 0] = 0
