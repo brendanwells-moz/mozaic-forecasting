@@ -1,4 +1,4 @@
-import holidays
+import holiday_smart
 import numpy as np
 import pandas as pd
 
