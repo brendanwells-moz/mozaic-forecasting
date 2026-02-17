@@ -131,9 +131,13 @@ class Mozaic:
             return tile.var(axis=1) / tile.mean(axis=1) + tile.mean(axis=1)
 
         if use_holidays:
-            _topline = self.forecast_reconciled + self.forecasted_holiday_impacts
+            _topline = (
+                self.forecast_reconciled + self.forecasted_holiday_impacts
+            ).clip(lower=0)
             _tiles = [
-                tile.forecast_reconciled + tile.forecasted_holiday_impacts
+                (tile.forecast_reconciled + tile.forecasted_holiday_impacts).clip(
+                    lower=0
+                )
                 for tile in self.tiles
             ]
         else:
@@ -221,14 +225,16 @@ class Mozaic:
         )
 
     def _predict_holiday_effects(self):
-        """
-        Compute proportional holiday effect per forecast date (unitless).
-        These are stored as a time-indexed Series and not yet applied to forecasts.
-        """
-
-        # Cross-join forecast dates and holiday dates
         df = pd.merge(
-            pd.DataFrame({"date": self.forecast_dates}),
+            pd.DataFrame(
+                {
+                    "date": pd.date_range(
+                        pd.to_datetime(self.historical_dates.min()),
+                        pd.to_datetime(self.forecast_end_date),
+                        freq="D",
+                    )
+                }
+            ),
             self.holiday_calendar.rename(columns={"submission_date": "holiday_date"}),
             how="cross",
         )
@@ -243,15 +249,56 @@ class Mozaic:
 
         # Exclude system holidays like "Data Loss"
         df = df[~df["holiday"].str.contains("Data Loss", na=False)].copy()
-        unmatched = df[df["average_effect"].isna()]["holiday"].unique()
 
-        df["average_effect"].astype(float).fillna(0.0, inplace=True)
+        cutoff = pd.to_datetime(self.forecast_start_date)
+
+        # unmatched must be computed BEFORE fillna(0)
+        unmatched = df.loc[
+            (df["date"] >= cutoff) & (df["average_effect"].isna()), "holiday"
+        ].unique()
+
+        df["average_effect"] = df["average_effect"].astype(float).fillna(0.0)
+
+        df["dow"] = df["date"].dt.dayofweek
+        mask = (
+            (df["date"] < cutoff)
+            & (df["date_diff"].between(-6, 6))
+            & (df["average_effect"] != 0)
+        )
+
+        denom = df.loc[mask, "average_effect"].mean()
+        if pd.isna(denom) or denom == 0:
+            self.dow_scale = pd.Series(1.0, index=range(7))
+        else:
+            self.dow_scale = (
+                df.loc[mask].groupby("dow")["average_effect"].mean() / denom
+            )
+
+        df["average_effect_dow_scaled"] = df["average_effect"] * df["dow"].map(
+            self.dow_scale
+        ).fillna(1.0)
+
+        self.dow_scale.clip(upper=1.25, inplace=True)
 
         self.proportional_holiday_effects = (
-            df.groupby("date")["average_effect"]
+            df.loc[df["date"] >= cutoff]
+            .groupby("date")["average_effect_dow_scaled"]
             .sum()
             .reindex(self.forecast_dates, fill_value=0)
         )
+        # ensure no single-day impact becomes too large
+        self.proportional_holiday_effects.clip(lower=-0.6, upper=0, inplace=True)
+
+        # ensure that blackouts reflect 100% decreases
+        blackout_idx = self.proportional_holiday_effects.index.intersection(
+            df.loc[
+                df["holiday"].str.contains("blackout", case=False, na=False)
+                & (df["date"] >= cutoff)
+                & (df["date_diff"] == 0),
+                "date",
+            ].drop_duplicates()
+        )
+        self.proportional_holiday_effects.loc[blackout_idx] = -1.0
 
         return unmatched.tolist() or None
 
@@ -318,7 +365,7 @@ class Mozaic:
 
         if hasattr(self, "forecasted_holiday_impacts"):
             forecast_df["forecast_raw"] = (
-                self.forecast + self.forecasted_holiday_impacts
+                (self.forecast + self.forecasted_holiday_impacts).clip(lower=0)
             ).quantile(quantile, axis=1)
 
         if hasattr(self, "forecast_reconciled"):
@@ -330,7 +377,9 @@ class Mozaic:
             self, "forecast_reconciled"
         ):
             forecast_df["forecast"] = (
-                self.forecast_reconciled + self.forecasted_holiday_impacts
+                (self.forecast_reconciled + self.forecasted_holiday_impacts).clip(
+                    lower=0
+                )
             ).quantile(quantile, axis=1)
 
         df = actuals_df.merge(forecast_df, on="submission_date", how="outer")
