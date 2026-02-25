@@ -1,3 +1,8 @@
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (real Prophet fits; deselect with '-m \"not slow\"')",
+]
+
 [project]
 name = "mozaic"
 version = "0.1.0"
