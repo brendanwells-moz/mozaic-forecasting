@@ -128,7 +128,12 @@ class Mozaic:
     def _reconcile_top_down_by_rescaling(self, use_holidays=False):
         def get_weight(tile):
             # note: var works better than std
-            return tile.var(axis=1) / tile.mean(axis=1) + tile.mean(axis=1)
+            mean = tile.mean(axis=1)
+            var = tile.var(axis=1)
+            # Avoid 0/0 NaN when a tile's forecast is all zeros on a date
+            # (e.g. small declining populations). Zero-mean tiles get zero
+            # weight so they receive no reconciliation adjustment.
+            return var / mean.where(mean != 0, np.inf) + mean
 
         if use_holidays:
             _topline = (
